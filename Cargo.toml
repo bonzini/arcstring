@@ -1,0 +1,9 @@
+[package]
+name = "arcstring"
+description = "Atomically reference-counted thin string type with SSO"
+license = "WTFPL"
+version = "1.0.0"
+edition = "2024"
+
+[features]
+usize = []
