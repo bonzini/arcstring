@@ -81,7 +81,7 @@ impl ArcStringBuilder {
 			boxed_data.get_data_ptr()
 		} else {
 			unsafe {
-				NonNull::new_unchecked((&self.data as *const usize).cast_mut()).cast()
+				NonNull::new_unchecked((&raw const self.data).cast_mut()).cast()
 			}
 		}
 	}

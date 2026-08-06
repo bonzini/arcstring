@@ -64,7 +64,7 @@ pub fn decode(val: &NonZeroUsize) -> &str {
 		HEADER_TAG => unsafe {
 			let ptr = decode_ptr(val.get()) as *const Header;
 			std::str::from_utf8_unchecked(std::slice::from_raw_parts(
-				&(*ptr).data as *const _ as *const u8, (*ptr).len as usize
+				(&raw const (*ptr).data).cast::<u8>(), (*ptr).len as usize
 			))
 		}
 		_ => unsafe {
@@ -91,7 +91,7 @@ pub fn as_static(val: &NonZeroUsize) -> Option<&'static str> {
 		Some(unsafe {
 			let ptr = decode_ptr(val.get()) as *const Header;
 			std::str::from_utf8_unchecked(std::slice::from_raw_parts(
-				&(*ptr).data as *const _ as *const u8, (*ptr).len as usize
+				(&raw const (*ptr).data).cast::<u8>(), (*ptr).len as usize
 			))
                 })
 	} else {
