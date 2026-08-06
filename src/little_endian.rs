@@ -3,12 +3,13 @@ use std::{num::NonZeroUsize, ptr::NonNull};
 use crate::{MAX_SSO_LEN, boxed_data::Header};
 
 /*
-	the tag sits in the highest byte, which is the last of the string and thus
-	cannot be a continuation byte
+	the tag lives in the first byte of the string, which is the lowest byte;
+	the first byte of a UTF-8 string is never a continuation byte, so 10xxxxxx
+	is free to be used as a tag:
+	if the highest three bits are 100, boxed
+	else, SSO
 
-	if the highest three bits are 110, boxed
-	if the highest three bits are 111, SSO(len < max)
-	else, SSO(len == max)
+	to make bits 5-7 free, the address in the boxed case is rotated left by 5
 
 	an SSO string is padded with 0xFF bytes, which never appear in UTF-8; as the
 	padding sits in the highest bytes, the length is MAX_SSO_LEN minus the number
@@ -17,9 +18,9 @@ use crate::{MAX_SSO_LEN, boxed_data::Header};
 	leading ones
 */
 
-const USIZE_BITS: usize = usize::BITS as usize;
-const HIGH_BITS: usize = 0b111 << (USIZE_BITS - 3);
-const BOXED_TAG: usize = 0b110 << (USIZE_BITS - 3);
+const TAG_POS: u32 = 5;
+const TAG_BITS: usize = 0b111 << TAG_POS;
+const BOXED_TAG: usize = 0b100 << TAG_POS;
 pub const EMPTY: NonZeroUsize = NonZeroUsize::new(usize::MAX).unwrap();
 
 #[inline(always)]
@@ -36,16 +37,22 @@ pub const fn try_encode_sso(s: &str) -> Option<NonZeroUsize> {
 	NonZeroUsize::new(usize::from_ne_bytes(data))
 }
 
+// rotating by TAG_POS moves the three always-zero low bits of the pointer onto the tag
 #[inline(always)]
 pub fn encode_ptr(ptr: usize) -> NonZeroUsize {
-	unsafe {NonZeroUsize::new_unchecked(ptr >> 3 | BOXED_TAG)}
+	unsafe {NonZeroUsize::new_unchecked(ptr.rotate_left(TAG_POS) | BOXED_TAG)}
+}
+
+#[inline(always)]
+const fn decode_ptr(val: usize) -> usize {
+	val.rotate_right(TAG_POS) & !0b111
 }
 
 #[inline(always)]
 pub fn decode(val: &NonZeroUsize) -> &str {
-	match val.get() & HIGH_BITS {
+	match val.get() & TAG_BITS {
 		BOXED_TAG => unsafe {
-			let ptr = (val.get() << 3) as *const Header;
+			let ptr = decode_ptr(val.get()) as *const Header;
 			std::str::from_utf8_unchecked(std::slice::from_raw_parts(
 				&(*ptr).data as *const _ as *const u8, (*ptr).len as usize
 			))
@@ -60,8 +67,8 @@ pub fn decode(val: &NonZeroUsize) -> &str {
 }
 
 pub fn as_ptr(val: usize) -> Option<NonNull<()>> {
-	if val & HIGH_BITS == BOXED_TAG {
-		Some(unsafe {NonNull::new_unchecked((val << 3) as *mut ())})
+	if val & TAG_BITS == BOXED_TAG {
+		Some(unsafe {NonNull::new_unchecked(decode_ptr(val) as *mut ())})
 	} else {
 		None
 	}
