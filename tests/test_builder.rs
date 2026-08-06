@@ -116,3 +116,17 @@ fn test_builder_clone() {
 	drop(clone);
 	assert_eq!(builder.as_str(), "the quick brown fox jumps over the lazy dog twice");
 }
+
+#[test]
+fn test_builder_shrink_to_fit() {
+	// a string that fits inline again has to give up its buffer, since a capacity
+	// of MAX_SSO_LEN is what marks a builder as inline
+	let mut builder = ArcStringBuilder::with_capacity(64);
+	builder.push_str("12345678");
+	builder.shrink_to_fit();
+	assert_eq!(builder.capacity(), arcstring::MAX_SSO_LEN);
+	assert_eq!(builder.as_str(), "12345678");
+	builder.push_str("9");
+	assert_eq!(builder.as_str(), "123456789");
+	assert!(builder.capacity() > arcstring::MAX_SSO_LEN);
+}

@@ -111,6 +111,7 @@ impl ArcStringBuilder {
 	}
 
 	fn set_capacity_internal(&mut self, new_capacity: usize) {
+		assert!(new_capacity > MAX_SSO_LEN);
 		if let Some(boxed_data) = self.get_boxed_data() {
 			unsafe {
 				self.data = boxed_data.realloc(self.capacity as usize, new_capacity).as_usize();
@@ -141,7 +142,13 @@ impl ArcStringBuilder {
 
 	pub fn shrink_to_fit(&mut self) {
 		if self.capacity as usize > MAX_SSO_LEN && self.capacity > self.length {
-			self.set_capacity_internal(self.length as usize);
+			if let Some(inline) = Self::try_new_sso(self.as_str()) {
+                                // self.length must be <= MAX_SSO_LEN, so the string fits inline
+                                // again.  the assignment drops the old builder and the buffer with it.
+				*self = inline;
+			} else {
+				self.set_capacity_internal(self.length as usize);
+			}
 		}
 	}
 
