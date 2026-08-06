@@ -74,6 +74,13 @@ impl ArcString {
 		Self(encoder::encode_literal(ptr))
 	}
 
+	/// Creates an `ArcString` that leaks the contents of `s`, so that the result
+	/// behaves like a string literal: it is not reference counted and it is never
+	/// freed. Strings that fit inline leak nothing.
+	pub fn leak_from(s: impl Into<ArcStringBuilder>) -> Self {
+		s.into().leak()
+	}
+
 	pub(crate) fn get_boxed_data(&self) -> Option<BoxedData> {
 		if let Some(ptr) = encoder::as_ptr(self.0.get()) {
 			Some(BoxedData::from_ptr(ptr))

@@ -164,29 +164,40 @@ impl ArcStringBuilder {
 		self.length = (self.length as usize + s.len()) as ulen;
 	}
 
-	pub fn into_arcstring(self) -> ArcString {
-		let self_str = self.as_str();
-		if let Some(arcstring) = ArcString::try_new_sso(self_str) {
-			arcstring
-		} else {
-			let boxed_data = if let Some(boxed_data) = self.get_boxed_data() {
-				if self.capacity > self.length {
-					unsafe {boxed_data.realloc(self.capacity as usize, self.length as usize)}
-				} else {
-					boxed_data
-				}
+	#[inline]
+	fn into_boxed_data(self) -> usize {
+		let boxed_data = if let Some(boxed_data) = self.get_boxed_data() {
+			if self.capacity > self.length {
+				unsafe {boxed_data.realloc(self.capacity as usize, self.length as usize)}
 			} else {
-				unsafe {
-					let boxed_data = BoxedData::alloc(self.length as usize);
-					boxed_data.get_data_ptr().as_ptr().copy_from_nonoverlapping(self_str.as_bytes().as_ptr(), self_str.len());
-					boxed_data
-				}
-			};
-			let boxed_ptr_as_usize = unsafe {boxed_data.finalize(self.length)};
-			core::mem::forget(self);
-			ArcString(encoder::encode_ptr(boxed_ptr_as_usize))
-		}
+				boxed_data
+			}
+		} else {
+			let self_str = self.as_str();
+			unsafe {
+				let boxed_data = BoxedData::alloc(self.length as usize);
+				boxed_data.get_data_ptr().as_ptr().copy_from_nonoverlapping(self_str.as_bytes().as_ptr(), self_str.len());
+				boxed_data
+			}
+		};
+		let boxed_ptr_as_usize = unsafe {boxed_data.finalize(self.length)};
+		core::mem::forget(self);
+		boxed_ptr_as_usize
 	}
+
+	pub fn into_arcstring(self) -> ArcString {
+		ArcString::try_new_sso(self.as_str())
+			.unwrap_or_else(|| ArcString(encoder::encode_ptr(self.into_boxed_data())))
+	}
+
+	/// Converts into an `ArcString` that leaks the buffer of the builder, so that
+	/// the result behaves like a string literal: it is not reference counted and
+	/// it is never freed. Strings that fit inline leak nothing.
+	pub fn leak(self) -> ArcString {
+		ArcString::try_new_sso(self.as_str())
+			.unwrap_or_else(|| ArcString(encoder::encode_literal(self.into_boxed_data())))
+	}
+
 }
 
 impl Default for ArcStringBuilder {
