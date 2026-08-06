@@ -5,20 +5,27 @@ use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 use std::ops::Add;
 
-use crate::{ArcString, MAX_SSO_LEN, boxed_data::BoxedData, encoder, ulen};
+use crate::{ArcString, MAX_SSO_LEN, boxed_data::{BoxedData, Header}, encoder, ulen};
 
 pub struct ArcStringBuilder {
 	capacity: ulen,
 	length: ulen,
-	data: usize
+	/* either the inline string, whose bytes are simply stored in place of an
+	   address, or a pointer to the Header of the string being built */
+	data: *mut Header
 }
+
+/* the buffer is owned by the builder alone, so it can be shared and handed over
+   between threads as freely as the string it is building */
+unsafe impl Send for ArcStringBuilder {}
+unsafe impl Sync for ArcStringBuilder {}
 
 impl ArcStringBuilder {
 	pub const fn new() -> Self {
 		Self {
 			capacity: MAX_SSO_LEN as ulen,
 			length: 0,
-			data: 0
+			data: core::ptr::null_mut()
 		}
 	}
 
@@ -55,7 +62,12 @@ impl ArcStringBuilder {
 			Some(Self {
 				capacity: MAX_SSO_LEN as ulen,
 				length: s.len() as ulen,
-				data: usize::from_ne_bytes(data)
+				/* an empty string, and only that, encodes to a null pointer */
+				data: if let Some(data) = encoder::encode_inline(data) {
+					data.as_ptr()
+				} else {
+					core::ptr::null_mut()
+				}
 			})
 		} else {
 			None
@@ -72,7 +84,7 @@ impl ArcStringBuilder {
 		if self.capacity as usize == MAX_SSO_LEN {
 			None
 		} else {
-			Some(unsafe {BoxedData::from_ptr(NonNull::new_unchecked(self.data as *mut ()))})
+			Some(unsafe {BoxedData::from_ptr(NonNull::new_unchecked(self.data))})
 		}
 	}
 
@@ -126,14 +138,14 @@ impl ArcStringBuilder {
 		assert!(new_capacity > MAX_SSO_LEN);
 		if let Some(boxed_data) = self.get_boxed_data() {
 			unsafe {
-				self.data = boxed_data.realloc(self.capacity as usize, new_capacity).as_usize();
+				self.data = boxed_data.realloc(self.capacity as usize, new_capacity).into_inner().as_ptr();
 			}
 		} else {
 			let boxed_data = BoxedData::alloc(new_capacity);
 			unsafe {
 				boxed_data.get_data_ptr().copy_from_nonoverlapping(self.get_data_ptr(), self.length as usize);
 			}
-			self.data = boxed_data.as_usize();
+			self.data = boxed_data.into_inner().as_ptr();
 		}
 		self.capacity = new_capacity.try_into().expect("ArcStringBuilder grew too long for the length type being used");
 	}
@@ -177,7 +189,7 @@ impl ArcStringBuilder {
 	}
 
 	#[inline]
-	fn into_boxed_data(self) -> usize {
+	fn into_boxed_data(self) -> NonNull<Header> {
 		let boxed_data = if let Some(boxed_data) = self.get_boxed_data() {
 			if self.capacity > self.length {
 				unsafe {boxed_data.realloc(self.capacity as usize, self.length as usize)}
@@ -192,9 +204,9 @@ impl ArcStringBuilder {
 				boxed_data
 			}
 		};
-		let boxed_ptr_as_usize = unsafe {boxed_data.finalize(self.length)};
+		let header = unsafe {boxed_data.finalize(self.length)};
 		core::mem::forget(self);
-		boxed_ptr_as_usize
+		header
 	}
 
 	pub fn into_arcstring(self) -> ArcString {
@@ -227,7 +239,7 @@ impl Clone for ArcStringBuilder {
 				Self {
 					capacity: self.capacity,
 					length: self.length,
-					data: clone_boxed_data.as_usize()
+					data: clone_boxed_data.into_inner().as_ptr()
 				}
 			}
 		} else {
@@ -303,7 +315,7 @@ impl From<ArcString> for ArcStringBuilder {
 				ArcStringBuilder {
 					capacity: len,
 					length: len,
-					data: x.as_usize()
+					data: x.into_inner().as_ptr()
 				}
 			}
 			Err(value) => ArcStringBuilder::from(value.as_str())
@@ -329,7 +341,7 @@ impl From<&str> for ArcStringBuilder {
 				Self {
 					capacity: len as ulen,
 					length: len as ulen,
-					data: boxed_data.as_usize()
+					data: boxed_data.into_inner().as_ptr()
 				}
 			}
 		}

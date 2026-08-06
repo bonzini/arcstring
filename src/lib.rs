@@ -1,5 +1,5 @@
 #![allow(clippy::match_overlapping_arm)]
-use core::{borrow::Borrow, fmt::{self, Debug, Display}, hash::Hash, mem::size_of, num::NonZeroUsize, ops::Add, str};
+use core::{borrow::Borrow, ptr::NonNull, fmt::{self, Debug, Display}, hash::Hash, mem::size_of, ops::Add, str};
 use std::hash::Hasher;
 
 const _: () = assert!(cfg!(any(target_pointer_width = "32", target_pointer_width = "64")));
@@ -22,7 +22,7 @@ mod little_endian;
 #[cfg(target_endian = "little")]
 pub(crate) use little_endian as encoder;
 
-use crate::boxed_data::BoxedData;
+use crate::boxed_data::{BoxedData, Header};
 pub use boxed_data::StaticHeader;
 
 pub(crate) mod boxed_data;
@@ -30,7 +30,12 @@ pub(crate) mod builder;
 pub use builder::ArcStringBuilder;
 
 #[repr(transparent)]
-pub struct ArcString(NonZeroUsize);
+pub struct ArcString(NonNull<Header>);
+
+/* the string data is immutable and the reference count is atomic, so a header
+   can be shared and handed over between threads */
+unsafe impl Send for ArcString {}
+unsafe impl Sync for ArcString {}
 
 /// Creates an [`ArcString`] from a string constant without allocating: short
 /// strings are stored inline, longer ones point to a descriptor that constant
@@ -69,8 +74,8 @@ impl ArcString {
 	/// is promoted to static memory by the [`arcstring!`] macro.
 	#[inline(always)]
 	pub fn from_static_raw<const N: usize>(header: &'static StaticHeader<N>) -> Self {
-		let ptr = header as *const StaticHeader<N> as usize;
-		debug_assert!((ptr & 7) == 0);
+		let ptr = NonNull::from(header).cast::<Header>();
+		debug_assert!((ptr.addr().get() & 7) == 0);
 		Self(encoder::encode_literal(ptr))
 	}
 
@@ -82,7 +87,7 @@ impl ArcString {
 	}
 
 	pub(crate) fn get_boxed_data(&self) -> Option<BoxedData> {
-		if let Some(ptr) = encoder::as_ptr(self.0.get()) {
+		if let Some(ptr) = encoder::as_ptr(self.0) {
 			Some(BoxedData::from_ptr(ptr))
 		} else {
 			None
@@ -111,7 +116,7 @@ impl ArcString {
 	}
 
 	pub fn is_boxed(&self) -> bool {
-		encoder::as_ptr(self.0.get()).is_some()
+		encoder::as_ptr(self.0).is_some()
 	}
 
 	pub fn is_empty(&self) -> bool {

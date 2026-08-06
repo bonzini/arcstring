@@ -1,4 +1,4 @@
-use core::{alloc::Layout, sync::atomic::{AtomicU32, fence}};
+use core::{alloc::Layout, num::NonZeroUsize, sync::atomic::{AtomicU32, fence}};
 use std::{ptr::NonNull, sync::atomic::Ordering};
 
 use crate::ulen;
@@ -36,6 +36,17 @@ impl<const N: usize> StaticHeader<N> {
 	}
 }
 
+/* NonNull::map_addr() works on NonZeroUsize, which the tagging and untagging of
+   an address never has to care about: f must never return zero */
+#[inline(always)]
+pub fn map_addr(ptr: NonNull<Header>, f: fn(usize) -> usize) -> NonNull<Header> {
+	ptr.map_addr(|addr| {
+		let addr = f(addr.get());
+		debug_assert!(addr != 0);
+		unsafe {NonZeroUsize::new_unchecked(addr)}
+	})
+}
+
 fn layout_for_len(len: usize) -> Layout {
 	Layout::new::<Header>().extend(Layout::from_size_align(len, 1).unwrap()).unwrap().0
 }
@@ -43,8 +54,8 @@ fn layout_for_len(len: usize) -> Layout {
 pub(crate) struct BoxedData(NonNull<Header>);
 
 impl BoxedData {
-	pub fn from_ptr(ptr: NonNull<()>) -> Self {
-		Self(ptr.cast())
+	pub fn from_ptr(ptr: NonNull<Header>) -> Self {
+		Self(ptr)
 	}
 
 	pub fn alloc(capacity: usize) -> Self {
@@ -68,7 +79,7 @@ impl BoxedData {
 		}
 	}
 
-	pub unsafe fn finalize(self, len: ulen) -> usize {
+	pub unsafe fn finalize(self, len: ulen) -> NonNull<Header> {
 		unsafe {
 			self.0.write(Header {
 				rc: AtomicU32::new(1),
@@ -76,11 +87,11 @@ impl BoxedData {
 				data: ()
 			});
 		}
-		self.0.as_ptr() as usize
+		self.0
 	}
 
-	pub fn as_usize(self) -> usize {
-		self.0.as_ptr() as usize
+	pub fn into_inner(self) -> NonNull<Header> {
+		self.0
 	}
 
 	pub fn get_data_ptr(&self) -> NonNull<u8> {

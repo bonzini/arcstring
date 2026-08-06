@@ -1,6 +1,6 @@
-use std::{num::NonZeroUsize, ptr::NonNull};
+use std::ptr::NonNull;
 
-use crate::{MAX_SSO_LEN, boxed_data::Header};
+use crate::{MAX_SSO_LEN, boxed_data::{Header, map_addr}};
 
 /*
 	the tag lives in the first byte of the string, which is the lowest byte;
@@ -28,10 +28,17 @@ const BOXED_TAG: usize = 0b100 << TAG_POS;
 const LITERAL_TAG: usize = 0b101 << TAG_POS;
 const HEADER_BITS: usize = 0b110 << TAG_POS;
 const HEADER_TAG: usize = 0b100 << TAG_POS;
-pub const EMPTY: NonZeroUsize = NonZeroUsize::new(usize::MAX).unwrap();
+pub const EMPTY: NonNull<Header> = encode_inline([!0; MAX_SSO_LEN]).unwrap();
 
 #[inline(always)]
-pub const fn try_encode_sso(s: &str) -> Option<NonZeroUsize> {
+pub const fn encode_inline(data: [u8; MAX_SSO_LEN]) -> Option<NonNull<Header>> {
+	// an SSO string is not a pointer: only the address bits of the NonNull are used,
+	// and the provenance is never needed because it is never dereferenced
+	NonNull::new(std::ptr::without_provenance_mut(usize::from_ne_bytes(data)))
+}
+
+#[inline(always)]
+pub const fn try_encode_sso(s: &str) -> Option<NonNull<Header>> {
 	let s = s.as_bytes();
 	if s.len() > MAX_SSO_LEN {
 		return None;
@@ -41,36 +48,37 @@ pub const fn try_encode_sso(s: &str) -> Option<NonZeroUsize> {
 
 	// the padding is empty for a string of MAX_SSO_LEN bytes, which is the only
 	// case in which the encoding can be zero: MAX_SSO_LEN NUL bytes are boxed
-	NonZeroUsize::new(usize::from_ne_bytes(data))
+	encode_inline(data)
 }
 
-// rotating by TAG_POS moves the three always-zero low bits of the pointer onto the tag
+/* rotating by TAG_POS moves the three always-zero low bits of the pointer onto
+   the tag; map_addr() keeps the provenance of the allocation across the round trip */
 #[inline(always)]
-pub fn encode_ptr(ptr: usize) -> NonZeroUsize {
-	unsafe {NonZeroUsize::new_unchecked(ptr.rotate_left(TAG_POS) | BOXED_TAG)}
-}
-
-#[inline(always)]
-pub fn encode_literal(ptr: usize) -> NonZeroUsize {
-	unsafe {NonZeroUsize::new_unchecked(ptr.rotate_left(TAG_POS) | LITERAL_TAG)}
+pub fn encode_ptr(ptr: NonNull<Header>) -> NonNull<Header> {
+	map_addr(ptr, |addr| addr.rotate_left(TAG_POS) | BOXED_TAG)
 }
 
 #[inline(always)]
-const fn decode_ptr(val: usize) -> usize {
-	val.rotate_right(TAG_POS) & !0b111
+pub fn encode_literal(ptr: NonNull<Header>) -> NonNull<Header> {
+	map_addr(ptr, |addr| addr.rotate_left(TAG_POS) | LITERAL_TAG)
 }
 
 #[inline(always)]
-pub fn decode(val: &NonZeroUsize) -> &str {
-	match val.get() & HEADER_BITS {
+fn decode_ptr(val: NonNull<Header>) -> NonNull<Header> {
+	map_addr(val, |addr| addr.rotate_right(TAG_POS) & !0b111)
+}
+
+#[inline(always)]
+pub fn decode(val: &NonNull<Header>) -> &str {
+	match val.addr().get() & HEADER_BITS {
 		HEADER_TAG => unsafe {
-			let ptr = decode_ptr(val.get()) as *const Header;
+			let ptr = decode_ptr(*val).as_ptr();
 			std::str::from_utf8_unchecked(std::slice::from_raw_parts(
 				(&raw const (*ptr).data).cast::<u8>(), (*ptr).len as usize
 			))
 		}
 		_ => unsafe {
-			let len = MAX_SSO_LEN - val.get().leading_ones() as usize / 8;
+			let len = MAX_SSO_LEN - val.addr().get().leading_ones() as usize / 8;
 			std::str::from_utf8_unchecked(std::slice::from_raw_parts(
 				val as *const _ as *const u8, len
 			))
@@ -79,19 +87,19 @@ pub fn decode(val: &NonZeroUsize) -> &str {
 }
 
 #[inline(always)]
-pub fn as_ptr(val: usize) -> Option<NonNull<()>> {
-	if val & TAG_BITS == BOXED_TAG {
-		Some(unsafe {NonNull::new_unchecked(decode_ptr(val) as *mut ())})
+pub fn as_ptr(val: NonNull<Header>) -> Option<NonNull<Header>> {
+	if val.addr().get() & TAG_BITS == BOXED_TAG {
+		Some(decode_ptr(val))
 	} else {
 		None
 	}
 }
 
 #[inline(always)]
-pub fn as_static(val: &NonZeroUsize) -> Option<&'static str> {
-	if val.get() & TAG_BITS == LITERAL_TAG {
+pub fn as_static(val: &NonNull<Header>) -> Option<&'static str> {
+	if val.addr().get() & TAG_BITS == LITERAL_TAG {
 		Some(unsafe {
-			let ptr = decode_ptr(val.get()) as *const Header;
+			let ptr = decode_ptr(*val).as_ptr();
 			std::str::from_utf8_unchecked(std::slice::from_raw_parts(
 				(&raw const (*ptr).data).cast::<u8>(), (*ptr).len as usize
 			))
