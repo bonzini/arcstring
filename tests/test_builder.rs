@@ -130,3 +130,40 @@ fn test_builder_shrink_to_fit() {
 	assert_eq!(builder.as_str(), "123456789");
 	assert!(builder.capacity() > arcstring::MAX_SSO_LEN);
 }
+
+#[test]
+fn test_builder_inline() {
+	const NULS: &str = "\0\0\0\0\0\0\0\0";
+
+	// an inline builder holds the same encoding an inline ArcString wants
+	// check that changing from ArcString to ArcStringBuilder works in both direction
+	for s in ["", "1", "1234567", "12345678", NULS, &NULS[..7]] {
+		let arcstring = ArcString::from(s);
+		let builder = ArcStringBuilder::from(arcstring.clone());
+		assert_eq!(builder.as_str(), s);
+		assert_eq!(builder.len(), s.len());
+		assert_eq!(builder.into_arcstring(), arcstring);
+
+		let mut builder = ArcStringBuilder::new();
+		for c in s.chars() {
+			builder.push(c);
+		}
+		assert_eq!(builder.as_str(), s);
+		assert_eq!(builder.clone().into_arcstring().as_str(), s);
+		assert_eq!(builder.leak().as_str(), s);
+	}
+
+	// a boxed builder whose contents are short enough is encoded inline again
+	let mut roomy = ArcStringBuilder::with_capacity(64);
+	roomy.push_str("short");
+	assert!(roomy.capacity() > arcstring::MAX_SSO_LEN);
+	let short = roomy.into_arcstring();
+	assert!(!short.is_boxed());
+	assert_eq!(short.as_str(), "short");
+
+	// MAX_SSO_LEN NUL bytes have no inline encoding, so they are boxed
+	let boxed = ArcStringBuilder::from(NULS).into_arcstring();
+	assert!(boxed.is_boxed());
+	assert_eq!(boxed.as_str(), NULS);
+	assert_eq!(ArcStringBuilder::from(NULS).leak().as_str(), NULS);
+}

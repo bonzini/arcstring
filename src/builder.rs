@@ -10,8 +10,10 @@ use crate::{ArcString, MAX_SSO_LEN, boxed_data::{BoxedData, Header}, encoder, ul
 pub struct ArcStringBuilder {
 	capacity: ulen,
 	length: ulen,
-	/* either the inline string, whose bytes are simply stored in place of an
-	   address, or a pointer to the Header of the string being built */
+	/* either a pointer to the Header of the string being built, or the string
+	   itself stored in place of an address, padded with 0xFF bytes exactly like
+	   an SSO ArcString: everything past self.length has to stay 0xFF, so that the
+	   word can be handed over to an ArcString without being re-encoded */
 	data: *mut Header
 }
 
@@ -25,7 +27,7 @@ impl ArcStringBuilder {
 		Self {
 			capacity: MAX_SSO_LEN as ulen,
 			length: 0,
-			data: core::ptr::null_mut()
+			data: encoder::EMPTY.as_ptr()
 		}
 	}
 
@@ -53,7 +55,7 @@ impl ArcStringBuilder {
 
 	pub const fn try_new_sso(s: &str) -> Option<Self> {
 		if Self::can_be_sso(s) {
-			let mut data = [0; MAX_SSO_LEN];
+			let mut data = [!0; MAX_SSO_LEN];
 			let mut i = 0;
 			while i < s.len() {
 				data[i] = s.as_bytes()[i];
@@ -209,17 +211,25 @@ impl ArcStringBuilder {
 		header
 	}
 
+	fn try_into_arcstring_sso(&self) -> Option<NonNull<Header>> {
+		// an inline builder already holds the SSO encoding of its contents, so the
+		// word only has to be moved over (if it is nonzero)
+		if self.capacity as usize == MAX_SSO_LEN {
+			NonNull::new(self.data)
+		} else {
+			encoder::try_encode_sso(self.as_str())
+		}
+	}
+
 	pub fn into_arcstring(self) -> ArcString {
-		ArcString::try_new_sso(self.as_str())
-			.unwrap_or_else(|| ArcString(encoder::encode_ptr(self.into_boxed_data())))
+		ArcString(self.try_into_arcstring_sso().unwrap_or_else(|| encoder::encode_ptr(self.into_boxed_data())))
 	}
 
 	/// Converts into an `ArcString` that leaks the buffer of the builder, so that
 	/// the result behaves like a string literal: it is not reference counted and
 	/// it is never freed. Strings that fit inline leak nothing.
 	pub fn leak(self) -> ArcString {
-		ArcString::try_new_sso(self.as_str())
-			.unwrap_or_else(|| ArcString(encoder::encode_literal(self.into_boxed_data())))
+		ArcString(self.try_into_arcstring_sso().unwrap_or_else(|| encoder::encode_literal(self.into_boxed_data())))
 	}
 
 }

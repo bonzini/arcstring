@@ -227,15 +227,7 @@ impl From<char> for ArcString {
 
 impl From<&str> for ArcString {
 	fn from(s: &str) -> Self {
-		if let Some(sso) = Self::try_new_sso(s) {
-			sso
-		} else {
-			let boxed_data = BoxedData::alloc(s.len());
-			unsafe {
-				boxed_data.get_data_ptr().as_ptr().copy_from_nonoverlapping(s.as_ptr(), s.len());
-				Self(encoder::encode_ptr(boxed_data.finalize(s.len() as ulen)))
-			}
-		}
+		ArcStringBuilder::from(s).into_arcstring()
 	}
 }
 
