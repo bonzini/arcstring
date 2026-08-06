@@ -86,6 +86,18 @@ impl ArcStringBuilder {
 		}
 	}
 
+	/* an inline string is written through the builder itself, so the pointer has
+	   to be derived from a mutable borrow rather than from a shared one */
+	fn get_data_ptr_mut(&mut self) -> NonNull<u8> {
+		if let Some(boxed_data) = self.get_boxed_data() {
+			boxed_data.get_data_ptr()
+		} else {
+			unsafe {
+				NonNull::new_unchecked(&raw mut self.data).cast()
+			}
+		}
+	}
+
 	pub fn capacity(&self) -> usize {
 		self.capacity as usize
 	}
@@ -106,7 +118,7 @@ impl ArcStringBuilder {
 
 	pub fn as_mut_str(&mut self) -> &mut str {
 		unsafe {
-			str::from_utf8_unchecked_mut(core::ptr::slice_from_raw_parts_mut(self.get_data_ptr().as_ptr(), self.length as usize).as_mut_unchecked())
+			str::from_utf8_unchecked_mut(core::ptr::slice_from_raw_parts_mut(self.get_data_ptr_mut().as_ptr(), self.length as usize).as_mut_unchecked())
 		}
 	}
 
@@ -159,7 +171,7 @@ impl ArcStringBuilder {
 	pub fn push_str(&mut self, s: &str) {
 		self.reserve(s.len());
 		unsafe {
-			self.get_data_ptr().byte_add(self.length as usize).as_ptr().copy_from_nonoverlapping(s.as_ptr(), s.len());
+			self.get_data_ptr_mut().byte_add(self.length as usize).as_ptr().copy_from_nonoverlapping(s.as_ptr(), s.len());
 		}
 		self.length = (self.length as usize + s.len()) as ulen;
 	}
