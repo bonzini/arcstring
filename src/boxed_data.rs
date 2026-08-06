@@ -11,6 +11,31 @@ pub struct Header {
 	pub data: ()
 }
 
+/// A [`Header`] for a string that lives in static memory, so that a literal is
+/// laid out exactly like a boxed string and decodes the same way.
+#[repr(align(8))]
+#[repr(C)]
+pub struct StaticHeader<const N: usize> {
+	/* the reference count is never touched, because a literal is not reference
+	   counted; it is a plain u32 rather than an AtomicU32 so that the descriptor
+	   has no interior mutability and can be promoted to static memory */
+	rc: u32,
+	len: ulen,
+	data: [u8; N]
+}
+
+const _: () = assert!(size_of::<Header>() == core::mem::offset_of!(StaticHeader<0>, data));
+
+impl<const N: usize> StaticHeader<N> {
+	pub const fn new(s: &'static str) -> Self {
+		assert!(s.len() == N, "the length of the string must be the size of the descriptor");
+		assert!(N <= ulen::MAX as usize, "the string is too long for the length type being used");
+		let mut result = Self { rc: 0, len: N as ulen, data: [0; N] };
+		unsafe { std::ptr::copy_nonoverlapping(s.as_ptr(), result.data.as_mut_ptr(), N); }
+		result
+	}
+}
+
 fn layout_for_len(len: usize) -> Layout {
 	Layout::new::<Header>().extend(Layout::from_size_align(len, 1).unwrap()).unwrap().0
 }

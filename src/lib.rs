@@ -23,6 +23,7 @@ mod little_endian;
 pub(crate) use little_endian as encoder;
 
 use crate::boxed_data::BoxedData;
+pub use boxed_data::StaticHeader;
 
 pub(crate) mod boxed_data;
 pub(crate) mod builder;
@@ -30,6 +31,21 @@ pub use builder::ArcStringBuilder;
 
 #[repr(transparent)]
 pub struct ArcString(NonZeroUsize);
+
+/// Creates an [`ArcString`] from a string constant without allocating: short
+/// strings are stored inline, longer ones point to a descriptor that constant
+/// promotion places in static memory.
+#[macro_export]
+macro_rules! arcstring {
+	($s:expr) => {{
+		const SSO: Option<$crate::ArcString> = $crate::ArcString::try_new_sso($s);
+		const DESC: &$crate::StaticHeader<{$s.len()}> = &$crate::StaticHeader::new($s);
+		match SSO {
+			Some(sso) => sso,
+			None => unsafe {$crate::ArcString::from_static_raw(DESC)}
+		}
+	}};
+}
 
 impl ArcString {
 	pub const fn empty() -> Self {
@@ -46,6 +62,16 @@ impl ArcString {
 
 	pub const fn can_be_sso(s: &str) -> bool {
 		encoder::try_encode_sso(s).is_some()
+	}
+
+	/// Creates an `ArcString` that points to the static descriptor `header`,
+	/// without allocating and without reference counting. Normally the descriptor
+	/// is promoted to static memory by the [`arcstring!`] macro.
+	#[inline(always)]
+	pub fn from_static_raw<const N: usize>(header: &'static StaticHeader<N>) -> Self {
+		let ptr = header as *const StaticHeader<N> as usize;
+		debug_assert!((ptr & 7) == 0);
+		Self(encoder::encode_literal(ptr))
 	}
 
 	pub(crate) fn get_boxed_data(&self) -> Option<BoxedData> {
