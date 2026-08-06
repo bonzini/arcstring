@@ -92,3 +92,27 @@ fn test_builder() {
 
 	assert_eq!(ArcStringBuilder::from("テスト"), ArcString::from("テスト"));
 }
+
+#[test]
+fn test_builder_clone() {
+	const TEXT: &str = "the quick brown fox jumps over the lazy dog";
+
+	// an inline builder owns no allocation, so cloning it is a plain copy
+	let sso = ArcStringBuilder::from("sso");
+	assert_eq!(sso.clone().as_str(), "sso");
+
+	// a builder longer than MAX_SSO_LEN owns a heap allocation, and the clone
+	// must get one of its own without touching the allocation being cloned
+	let mut builder = ArcStringBuilder::from(TEXT);
+	assert!(builder.capacity() > arcstring::MAX_SSO_LEN);
+	let clone = builder.clone();
+	assert_eq!(clone.as_str(), TEXT);
+	assert_eq!(clone.as_str(), builder.as_str());
+	assert_eq!(clone, builder);
+	builder.push_str(" twice");
+	assert_ne!(clone, builder);
+
+	// and dropping one leaves the other usable
+	drop(clone);
+	assert_eq!(builder.as_str(), "the quick brown fox jumps over the lazy dog twice");
+}

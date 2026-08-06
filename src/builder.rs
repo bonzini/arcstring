@@ -192,7 +192,6 @@ impl Clone for ArcStringBuilder {
 	fn clone(&self) -> Self {
 		if let Some(boxed_data) = self.get_boxed_data() {
 			unsafe {
-				boxed_data.dealloc(self.capacity as usize);
 				let clone_boxed_data = BoxedData::alloc(self.capacity());
 				clone_boxed_data.get_data_ptr().copy_from_nonoverlapping(boxed_data.get_data_ptr(), self.length as usize);
 				Self {
