@@ -109,8 +109,15 @@ impl BoxedData<'_> {
 	pub fn realloc(self, new_capacity: usize) -> Self {
 		assert!(ulen::try_from(new_capacity).is_ok(), "the string is too long for the length type being used");
 		let old_layout = Layout::for_value(&*self);
-		let ptr = unsafe {std::alloc::realloc(self.0.cast::<u8>().as_ptr(), old_layout, layout_for_len(new_capacity).size())};
-		let ptr = NonNull::new(ptr).unwrap();
+		let new_layout = layout_for_len(new_capacity);
+		let ptr = if new_layout.size() == old_layout.size() {
+			/* the padding absorbs the difference: only the capacity that the slice is
+			   borrowed with has to change */
+			self.into_inner()
+		} else {
+			let ptr = unsafe {std::alloc::realloc(self.0.cast::<u8>().as_ptr(), old_layout, new_layout.size())};
+			NonNull::new(ptr).unwrap().cast()
+		};
 		unsafe {Self::from_ptr_with_capacity(ptr.cast(), new_capacity)}
 	}
 
@@ -146,6 +153,12 @@ impl BoxedData<'_> {
 
 	pub fn len(&self) -> ulen {
 		self.len
+	}
+
+	pub fn capacity(&self) -> usize {
+		/* the allocation was padded to the alignment of the header, so it holds a few
+		   bytes more than were asked for */
+		Layout::for_value(&**self).size() - size_of::<Header>()
 	}
 
 	pub fn is_only_ref(&self) -> bool {

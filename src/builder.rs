@@ -383,9 +383,11 @@ impl From<ArcString> for ArcStringBuilder {
 		match value.try_take_boxed_data() {
 			Ok(x) => {
 				let x = unsafe { BoxedData::from_ptr(x) };
+				let length = x.len();
+				let capacity = ulen::try_from(x.capacity()).unwrap_or(length);
 				ArcStringBuilder {
-					capacity: x.len(),
-					length: x.len(),
+					capacity,
+					length,
 					data: x.into_inner().as_ptr(),
 				}
 			}
