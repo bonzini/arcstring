@@ -1,4 +1,4 @@
-use core::{alloc::Layout, sync::atomic::AtomicU32};
+use core::{alloc::Layout, sync::atomic::{AtomicU32, fence}};
 use std::{ptr::NonNull, sync::atomic::Ordering};
 
 use crate::ulen;
@@ -83,6 +83,8 @@ impl BoxedData {
 	pub unsafe fn destroy_ref(self) {
 		unsafe {
 			if self.0.as_ref().rc.fetch_sub(1, Ordering::Release) == 1 {
+				// the last decrement needs to synchronize with the previous ones
+				fence(Ordering::Acquire);
 				std::alloc::dealloc(self.0.as_ptr().cast(), layout_for_len(self.len() as usize));
 			}
 		}
