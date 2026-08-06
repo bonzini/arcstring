@@ -89,6 +89,10 @@ impl ArcString {
 		encoder::decode(&self.0).len()
 	}
 
+	pub fn as_static(&self) -> Option<&'static str> {
+		encoder::as_static(&self.0)
+	}
+
 	pub fn char_at(&self, idx: usize) -> Option<char> {
 		self.as_str().get(idx..).and_then(|x| x.chars().next())
 	}
