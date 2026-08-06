@@ -47,8 +47,11 @@ fn test_arcstring() {
 	assert_ne!(ArcString::from("XXXXXXXXXXXXXXXXXX").as_str(), "XXXXXXXXXXXXXXXXX");
 	assert_eq!(ArcString::from("XXXXXXXXXXXXXXXXXX").as_str(), "XXXXXXXXXXXXXXXXXX");
 	assert_eq!(ArcString::from("\0\0").as_str(), "\0\0");
+	#[cfg(target_pointer_width = "32")]
+	assert!(ArcString::from("\0\0\0\0").is_boxed());
 	assert_eq!(ArcString::from("\0\0\0\0").as_str(), "\0\0\0\0");
 	assert_eq!(ArcString::from("\0\0\0\0\0\0\0").as_str(), "\0\0\0\0\0\0\0");
+	assert!(ArcString::from("\0\0\0\0\0\0\0\0").is_boxed());
 	assert_eq!(ArcString::from("\0\0\0\0\0\0\0\0").as_str(), "\0\0\0\0\0\0\0\0");
 	assert_eq!(ArcString::from("\0\0\0\0\0\0\0\0\0").as_str(), "\0\0\0\0\0\0\0\0\0");
 	assert_eq!(ArcString::from_iter(["\0", "\0"].into_iter()).as_str(), "\0\0");

@@ -4,45 +4,37 @@ use std::{num::NonZeroUsize, ptr::NonNull};
 use crate::{MAX_SSO_LEN, boxed_data::Header};
 
 /*
+	the tag sits in the lowest byte, which is the last of the string and thus
+	cannot be a continuation byte
+
 	if the highest three bits are 110, boxed
 	if the highest three bits are 111, SSO(len < max)
 	else, SSO(len == max)
+
+	an SSO string is padded with 0xFF bytes, which never appear in UTF-8; as the
+	padding sits in the lowest bytes, the length is MAX_SSO_LEN minus the number
+	of trailing one bytes. counting bits and dividing by eight is enough, because
+	the last byte of the string is never 0xFF and so contributes at most five
+	trailing ones
 */
 
 const USIZE_BITS: usize = usize::BITS as usize;
 const HIGH_BITS: usize = 0b11100000;
-const SSO_TAG: usize = 0b11100000;
 const BOXED_TAG: usize = 0b11000000;
-pub const EMPTY: usize = SSO_TAG;
+pub const EMPTY: NonZeroUsize = NonZeroUsize::new(usize::MAX).unwrap();
 
-#[cfg(target_pointer_width = "32")]
 #[inline(always)]
 pub const fn try_encode_sso(s: &str) -> Option<NonZeroUsize> {
-	NonZeroUsize::new(match s.len() {
-		0 => usize::from_be_bytes([0, 0, 0, SSO_TAG as u8]),
-		1 => usize::from_be_bytes([s.as_bytes()[0], 0, 0, SSO_TAG as u8 | 1]),
-		2 => usize::from_be_bytes([s.as_bytes()[0], s.as_bytes()[1], 0, SSO_TAG as u8 | 2]),
-		3 => usize::from_be_bytes([s.as_bytes()[0], s.as_bytes()[1], s.as_bytes()[2], SSO_TAG as u8 | 3]),
-		4 => usize::from_be_bytes([s.as_bytes()[0], s.as_bytes()[1], s.as_bytes()[2], s.as_bytes()[3]]),
-		_ => 0
-	})
-}
+	let s = s.as_bytes();
+	if s.len() > MAX_SSO_LEN {
+		return None;
+	}
+	let mut data = [!0; MAX_SSO_LEN];
+	unsafe { std::ptr::copy_nonoverlapping(s.as_ptr(), data.as_mut_ptr(), s.len()) };
 
-#[cfg(target_pointer_width = "64")]
-#[inline(always)]
-pub const fn try_encode_sso(s: &str) -> Option<NonZeroUsize> {
-	NonZeroUsize::new(match s.len() {
-		0 => usize::from_be_bytes([0, 0, 0, 0, 0, 0, 0, SSO_TAG as u8]),
-		1 => usize::from_be_bytes([s.as_bytes()[0], 0, 0, 0, 0, 0, 0, SSO_TAG as u8 | 1]),
-		2 => usize::from_be_bytes([s.as_bytes()[0], s.as_bytes()[1], 0, 0, 0, 0, 0, SSO_TAG as u8 | 2]),
-		3 => usize::from_be_bytes([s.as_bytes()[0], s.as_bytes()[1], s.as_bytes()[2], 0, 0, 0, 0, SSO_TAG as u8 | 3]),
-		4 => usize::from_be_bytes([s.as_bytes()[0], s.as_bytes()[1], s.as_bytes()[2], s.as_bytes()[3], 0, 0, 0, SSO_TAG as u8 | 4]),
-		5 => usize::from_be_bytes([s.as_bytes()[0], s.as_bytes()[1], s.as_bytes()[2], s.as_bytes()[3], s.as_bytes()[4], 0, 0, SSO_TAG as u8 | 5]),
-		6 => usize::from_be_bytes([s.as_bytes()[0], s.as_bytes()[1], s.as_bytes()[2], s.as_bytes()[3], s.as_bytes()[4], s.as_bytes()[5], 0, SSO_TAG as u8 | 6]),
-		7 => usize::from_be_bytes([s.as_bytes()[0], s.as_bytes()[1], s.as_bytes()[2], s.as_bytes()[3], s.as_bytes()[4], s.as_bytes()[5], s.as_bytes()[6], SSO_TAG as u8 | 7]),
-		8 => usize::from_be_bytes([s.as_bytes()[0], s.as_bytes()[1], s.as_bytes()[2], s.as_bytes()[3], s.as_bytes()[4], s.as_bytes()[5], s.as_bytes()[6], s.as_bytes()[7]]),
-		_ => 0
-	})
+	// the padding is empty for a string of MAX_SSO_LEN bytes, which is the only
+	// case in which the encoding can be zero: MAX_SSO_LEN NUL bytes are boxed
+	NonZeroUsize::new(usize::from_ne_bytes(data))
 }
 
 #[inline(always)]
@@ -59,14 +51,10 @@ pub fn decode(val: &NonZeroUsize) -> &str {
 				&(*ptr).data as *const _ as *const u8, (*ptr).len as usize
 			))
 		}
-		SSO_TAG => unsafe {
-			std::str::from_utf8_unchecked(std::slice::from_raw_parts(
-				val as *const _ as *const u8, val.get() & 0xF
-			))
-		}
 		_ => unsafe {
+			let len = MAX_SSO_LEN - val.get().trailing_ones() as usize / 8;
 			std::str::from_utf8_unchecked(std::slice::from_raw_parts(
-				val as *const _ as *const u8, MAX_SSO_LEN
+				val as *const _ as *const u8, len
 			))
 		}
 	}
