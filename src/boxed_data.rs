@@ -15,7 +15,6 @@ fn layout_for_len(len: usize) -> Layout {
 	Layout::new::<Header>().extend(Layout::from_size_align(len, 1).unwrap()).unwrap().0
 }
 
-#[derive(Clone, Copy)]
 pub(crate) struct BoxedData(NonNull<Header>);
 
 impl BoxedData {
@@ -59,15 +58,15 @@ impl BoxedData {
 		self.0.as_ptr() as usize
 	}
 
-	pub fn get_data_ptr(self) -> NonNull<u8> {
+	pub fn get_data_ptr(&self) -> NonNull<u8> {
 		unsafe {self.0.byte_add(size_of::<Header>()).cast::<u8>()}
 	}
 
-	pub unsafe fn len(self) -> ulen {
+	pub unsafe fn len(&self) -> ulen {
 		unsafe {self.0.as_ref().len}
 	}
 
-	pub unsafe fn is_only_ref(self) -> bool {
+	pub unsafe fn is_only_ref(&self) -> bool {
 		unsafe {
 			self.0.as_ref().rc.load(Ordering::Acquire) == 1
 		}
