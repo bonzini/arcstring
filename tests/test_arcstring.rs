@@ -74,6 +74,7 @@ fn test_arcstring() {
 	let s1 = ArcString::from("テスト・テキスト");
 	let s2 = ArcString::from("テスト・テキスト");
 	let s3 = ArcString::from("テスト・テキスト");
+	assert_eq!(s1.as_static(), None);
 	assert_eq!(s1, s2);
 	assert_eq!(s2, s3);
 	assert_eq!(ArcString::from("テスト"), ArcString::from("テスト"));
