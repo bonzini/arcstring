@@ -22,6 +22,9 @@ pub(crate) mod boxed_data;
 pub(crate) mod builder;
 pub use builder::ArcStringBuilder;
 
+#[cfg(feature = "serde")]
+mod serde;
+
 #[repr(transparent)]
 pub struct ArcString(NonNull<Header>);
 
