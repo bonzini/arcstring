@@ -1,6 +1,9 @@
 #![allow(clippy::match_overlapping_arm)]
-use core::{borrow::Borrow, ptr::NonNull, fmt::{self, Debug, Display}, hash::Hash, mem::size_of, ops::Add, str};
+use core::{borrow::Borrow, cmp::Ordering, convert::Infallible, ptr::NonNull, fmt::{self, Debug, Display}, hash::Hash, mem::size_of, ops::{Add, Deref}, str::{self, FromStr, Utf8Error}};
+use std::borrow::Cow;
+use std::ffi::OsStr;
 use std::hash::Hasher;
+use std::path::Path;
 
 const _: () = assert!(cfg!(any(target_pointer_width = "32", target_pointer_width = "64")));
 
@@ -100,10 +103,6 @@ impl ArcString {
 		}
 	}
 
-	pub fn from_iter<'a>(it: impl Iterator<Item = &'a str> + Clone) -> Self {
-		ArcStringBuilder::from_iter(it).into_arcstring()
-	}
-
 	pub fn from_display<T: Display>(display: T) -> Self {
 		ArcStringBuilder::from_display(display).into_arcstring()
 	}
@@ -184,6 +183,24 @@ impl PartialEq<str> for ArcString {
 	}
 }
 
+impl PartialEq<&str> for ArcString {
+	fn eq(&self, other: &&str) -> bool {
+		self.as_str() == *other
+	}
+}
+
+impl PartialEq<ArcString> for str {
+	fn eq(&self, other: &ArcString) -> bool {
+		self == other.as_str()
+	}
+}
+
+impl PartialEq<ArcString> for &str {
+	fn eq(&self, other: &ArcString) -> bool {
+		*self == other.as_str()
+	}
+}
+
 impl PartialEq<ArcStringBuilder> for ArcString {
 	fn eq(&self, other: &ArcStringBuilder) -> bool {
 		self.as_str() == other.as_str()
@@ -191,6 +208,18 @@ impl PartialEq<ArcStringBuilder> for ArcString {
 }
 
 impl Eq for ArcString {}
+
+impl PartialOrd for ArcString {
+	fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+		Some(self.cmp(other))
+	}
+}
+
+impl Ord for ArcString {
+	fn cmp(&self, other: &Self) -> Ordering {
+		self.as_str().cmp(other.as_str())
+	}
+}
 
 impl Hash for ArcString {
 	fn hash<H: Hasher>(&self, state: &mut H) {
@@ -240,6 +269,53 @@ impl From<String> for ArcString {
 	}
 }
 
+impl From<&String> for ArcString {
+	fn from(value: &String) -> Self {
+		Self::from(value.as_str())
+	}
+}
+
+impl From<Box<str>> for ArcString {
+	fn from(value: Box<str>) -> Self {
+		Self::from(&*value)
+	}
+}
+
+impl From<Cow<'_, str>> for ArcString {
+	fn from(value: Cow<'_, str>) -> Self {
+		Self::from(&*value)
+	}
+}
+
+impl TryFrom<&[u8]> for ArcString {
+	type Error = Utf8Error;
+	fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+		Ok(Self::from(str::from_utf8(value)?))
+	}
+}
+
+impl TryFrom<Vec<u8>> for ArcString {
+	type Error = Utf8Error;
+	fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
+		Ok(Self::from(str::from_utf8(&value)?))
+	}
+}
+
+impl FromStr for ArcString {
+	type Err = Infallible;
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		Ok(Self::from(s))
+	}
+}
+
+/* the concatenation itself is the builder's job, so anything it can collect
+   can be collected into an ArcString too */
+impl<T> FromIterator<T> for ArcString where ArcStringBuilder: FromIterator<T> {
+	fn from_iter<I: IntoIterator<Item = T>>(it: I) -> Self {
+		ArcStringBuilder::from_iter(it).into_arcstring()
+	}
+}
+
 impl Add for ArcString {
 	type Output = Self;
 	fn add(self, rhs: Self) -> Self::Output {
@@ -250,7 +326,7 @@ impl Add for ArcString {
 		} else if rhs_str.is_empty() {
 			self
 		} else {
-			Self::from_iter([lhs_str, rhs_str].into_iter())
+			Self::from_iter([lhs_str, rhs_str])
 		}
 	}
 }
@@ -261,7 +337,7 @@ impl Add<&str> for ArcString {
 		if rhs.is_empty() {
 			self
 		} else {
-			Self::from_iter([self.as_str(), rhs].into_iter())
+			Self::from_iter([self.as_str(), rhs])
 		}
 	}
 }
@@ -269,7 +345,7 @@ impl Add<&str> for ArcString {
 impl Add<char> for ArcString {
 	type Output = Self;
 	fn add(self, rhs: char) -> Self::Output {
-		Self::from_iter([self.as_str(), rhs.encode_utf8(&mut [0; 4])].into_iter())
+		Self::from_iter([self.as_str(), rhs.encode_utf8(&mut [0; 4])])
 	}
 }
 
@@ -279,8 +355,35 @@ impl Borrow<str> for ArcString {
 	}
 }
 
+/* this is what makes the whole of str, and indexing by a range, available on
+   an ArcString without going through as_str() */
+impl Deref for ArcString {
+	type Target = str;
+	fn deref(&self) -> &str {
+		self.as_str()
+	}
+}
+
 impl AsRef<str> for ArcString {
 	fn as_ref(&self) -> &str {
 		self.as_str()
+	}
+}
+
+impl AsRef<[u8]> for ArcString {
+	fn as_ref(&self) -> &[u8] {
+		self.as_str().as_bytes()
+	}
+}
+
+impl AsRef<OsStr> for ArcString {
+	fn as_ref(&self) -> &OsStr {
+		OsStr::new(self.as_str())
+	}
+}
+
+impl AsRef<Path> for ArcString {
+	fn as_ref(&self) -> &Path {
+		Path::new(self.as_str())
 	}
 }

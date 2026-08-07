@@ -1,9 +1,10 @@
 use core::fmt::{self, Display, Write};
 use core::ptr::NonNull;
-use std::borrow::{Borrow, BorrowMut};
+use std::borrow::{Borrow, BorrowMut, Cow};
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
-use std::ops::Add;
+use std::cmp::Ordering;
+use std::ops::{Add, AddAssign, Deref, DerefMut};
 
 use crate::{ArcString, MAX_SSO_LEN, boxed_data::{BoxedData, Header}, encoder, ulen};
 
@@ -34,18 +35,6 @@ impl ArcStringBuilder {
 	pub fn with_capacity(capacity: usize) -> Self {
 		let mut builder = Self::new();
 		builder.reserve(capacity);
-		builder
-	}
-
-	pub fn from_iter<'a>(it: impl Iterator<Item = &'a str> + Clone) -> Self {
-		let mut len = 0;
-		for s in it.clone() {
-			len += s.len();
-		}
-		let mut builder = Self::with_capacity(len);
-		for s in it {
-			builder.push_str(s);
-		}
 		builder
 	}
 
@@ -287,6 +276,24 @@ impl PartialEq<str> for ArcStringBuilder {
 	}
 }
 
+impl PartialEq<&str> for ArcStringBuilder {
+	fn eq(&self, other: &&str) -> bool {
+		self.as_str() == *other
+	}
+}
+
+impl PartialEq<ArcStringBuilder> for str {
+	fn eq(&self, other: &ArcStringBuilder) -> bool {
+		self == other.as_str()
+	}
+}
+
+impl PartialEq<ArcStringBuilder> for &str {
+	fn eq(&self, other: &ArcStringBuilder) -> bool {
+		*self == other.as_str()
+	}
+}
+
 impl PartialEq<ArcString> for ArcStringBuilder {
 	fn eq(&self, other: &ArcString) -> bool {
 		self.as_str() == other.as_str()
@@ -294,6 +301,18 @@ impl PartialEq<ArcString> for ArcStringBuilder {
 }
 
 impl Eq for ArcStringBuilder {}
+
+impl PartialOrd for ArcStringBuilder {
+	fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+		Some(self.cmp(other))
+	}
+}
+
+impl Ord for ArcStringBuilder {
+	fn cmp(&self, other: &Self) -> Ordering {
+		self.as_str().cmp(other.as_str())
+	}
+}
 
 impl Hash for ArcStringBuilder {
 	fn hash<H: Hasher>(&self, state: &mut H) {
@@ -317,6 +336,45 @@ impl Write for ArcStringBuilder {
 	fn write_str(&mut self, s: &str) -> fmt::Result {
 		self.push_str(s);
 		Ok(())
+	}
+}
+
+/* the iterator is walked only once, so the buffer starts out inline and grows
+   as the pieces are pushed, instead of being sized up front */
+macro_rules! impl_extend {
+	($(($($gen:tt)*) $t:ty),+ $(,)?) => {$(
+		impl<$($gen)*> Extend<$t> for ArcStringBuilder {
+			fn extend<I: IntoIterator<Item = $t>>(&mut self, it: I) {
+				for s in it {
+					self.push_str(s.as_ref());
+				}
+			}
+		}
+	)+};
+}
+
+impl_extend!(('a) &'a str, () String, ('a) &'a String, () Box<str>, ('a) Cow<'a, str>);
+
+impl Extend<char> for ArcStringBuilder {
+	fn extend<I: IntoIterator<Item = char>>(&mut self, it: I) {
+		for c in it {
+			self.push(c);
+		}
+	}
+}
+
+impl<'a> Extend<&'a char> for ArcStringBuilder {
+	fn extend<I: IntoIterator<Item = &'a char>>(&mut self, it: I) {
+		self.extend(it.into_iter().copied());
+	}
+}
+
+/* collecting is extending an empty builder, so the two share everything */
+impl<T> FromIterator<T> for ArcStringBuilder where Self: Extend<T> {
+	fn from_iter<I: IntoIterator<Item = T>>(it: I) -> Self {
+		let mut builder = Self::new();
+		builder.extend(it);
+		builder
 	}
 }
 
@@ -373,6 +431,24 @@ impl From<String> for ArcStringBuilder {
 	}
 }
 
+impl From<&String> for ArcStringBuilder {
+	fn from(value: &String) -> Self {
+		Self::from(value.as_str())
+	}
+}
+
+impl From<Box<str>> for ArcStringBuilder {
+	fn from(value: Box<str>) -> Self {
+		Self::from(&*value)
+	}
+}
+
+impl From<Cow<'_, str>> for ArcStringBuilder {
+	fn from(value: Cow<'_, str>) -> Self {
+		Self::from(&*value)
+	}
+}
+
 impl Add for ArcStringBuilder {
 	type Output = Self;
 	fn add(mut self, rhs: Self) -> Self::Output {
@@ -398,6 +474,33 @@ impl Add<char> for ArcStringBuilder {
 	fn add(mut self, rhs: char) -> Self::Output {
 		self.push_str(rhs.encode_utf8(&mut [0; 4]));
 		self
+	}
+}
+
+impl AddAssign<&str> for ArcStringBuilder {
+	fn add_assign(&mut self, rhs: &str) {
+		self.push_str(rhs);
+	}
+}
+
+impl AddAssign<char> for ArcStringBuilder {
+	fn add_assign(&mut self, rhs: char) {
+		self.push(rhs);
+	}
+}
+
+/* this is what makes the whole of str, and indexing by a range, available on
+   a builder without going through as_str() */
+impl Deref for ArcStringBuilder {
+	type Target = str;
+	fn deref(&self) -> &str {
+		self.as_str()
+	}
+}
+
+impl DerefMut for ArcStringBuilder {
+	fn deref_mut(&mut self) -> &mut str {
+		self.as_mut_str()
 	}
 }
 
