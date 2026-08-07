@@ -13,14 +13,7 @@ pub(crate) type ulen = u32;
 
 pub const MAX_SSO_LEN: usize = size_of::<usize>();
 
-#[allow(unused)]
-mod big_endian;
-#[cfg(target_endian = "big")]
-pub(crate) use big_endian as encoder;
-#[allow(unused)]
-mod little_endian;
-#[cfg(target_endian = "little")]
-pub(crate) use little_endian as encoder;
+pub(crate) mod encoder;
 
 use crate::boxed_data::{BoxedData, Header};
 pub use boxed_data::StaticHeader;
