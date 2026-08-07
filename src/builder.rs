@@ -82,33 +82,29 @@ impl ArcStringBuilder {
 		builder
 	}
 
-	fn get_boxed_data(&self) -> Option<BoxedData> {
+	fn get_boxed_data(&self) -> Option<BoxedData<'_>> {
 		if self.capacity as usize == MAX_SSO_LEN {
 			None
 		} else {
-			Some(unsafe {BoxedData::from_ptr(NonNull::new_unchecked(self.data))})
+			Some(unsafe {BoxedData::from_ptr_with_capacity(NonNull::new_unchecked(self.data), self.capacity as usize)})
 		}
 	}
 
-	fn get_data_ptr(&self) -> NonNull<u8> {
+	fn get_data_ptr(&self) -> *const u8 {
 		if let Some(boxed_data) = self.get_boxed_data() {
 			boxed_data.get_data_ptr()
 		} else {
-			unsafe {
-				NonNull::new_unchecked((&raw const self.data).cast_mut()).cast()
-			}
+			(&raw const self.data).cast()
 		}
 	}
 
 	/* an inline string is written through the builder itself, so the pointer has
 	   to be derived from a mutable borrow rather than from a shared one */
-	fn get_data_ptr_mut(&mut self) -> NonNull<u8> {
-		if let Some(boxed_data) = self.get_boxed_data() {
-			boxed_data.get_data_ptr()
+	fn get_data_ptr_mut(&mut self) -> *mut u8 {
+		if let Some(mut boxed_data) = self.get_boxed_data() {
+			boxed_data.get_data_ptr_mut()
 		} else {
-			unsafe {
-				NonNull::new_unchecked(&raw mut self.data).cast()
-			}
+			(&raw mut self.data).cast()
 		}
 	}
 
@@ -126,26 +122,24 @@ impl ArcStringBuilder {
 
 	pub fn as_str(&self) -> &str {
 		unsafe {
-			str::from_utf8_unchecked(core::ptr::slice_from_raw_parts(self.get_data_ptr().as_ptr(), self.length as usize).as_ref_unchecked())
+			str::from_utf8_unchecked(core::ptr::slice_from_raw_parts(self.get_data_ptr(), self.length as usize).as_ref_unchecked())
 		}
 	}
 
 	pub fn as_mut_str(&mut self) -> &mut str {
 		unsafe {
-			str::from_utf8_unchecked_mut(core::ptr::slice_from_raw_parts_mut(self.get_data_ptr_mut().as_ptr(), self.length as usize).as_mut_unchecked())
+			str::from_utf8_unchecked_mut(core::ptr::slice_from_raw_parts_mut(self.get_data_ptr_mut(), self.length as usize).as_mut_unchecked())
 		}
 	}
 
 	fn set_capacity_internal(&mut self, new_capacity: usize) {
 		assert!(new_capacity > MAX_SSO_LEN);
 		if let Some(boxed_data) = self.get_boxed_data() {
-			unsafe {
-				self.data = boxed_data.realloc(self.capacity as usize, new_capacity).into_inner().as_ptr();
-			}
+			self.data = boxed_data.realloc(new_capacity).into_inner().as_ptr();
 		} else {
-			let boxed_data = BoxedData::alloc(new_capacity);
+			let mut boxed_data = BoxedData::alloc(new_capacity);
 			unsafe {
-				boxed_data.get_data_ptr().copy_from_nonoverlapping(self.get_data_ptr(), self.length as usize);
+				boxed_data.get_data_ptr_mut().copy_from_nonoverlapping(self.get_data_ptr(), self.length as usize);
 			}
 			self.data = boxed_data.into_inner().as_ptr();
 		}
@@ -169,8 +163,8 @@ impl ArcStringBuilder {
 	pub fn shrink_to_fit(&mut self) {
 		if self.capacity as usize > MAX_SSO_LEN && self.capacity > self.length {
 			if let Some(inline) = Self::try_new_sso(self.as_str()) {
-                                // self.length must be <= MAX_SSO_LEN, so the string fits inline
-                                // again.  the assignment drops the old builder and the buffer with it.
+				// self.length must be <= MAX_SSO_LEN, so the string fits inline
+				// again.  the assignment drops the old builder and the buffer with it.
 				*self = inline;
 			} else {
 				self.set_capacity_internal(self.length as usize);
@@ -185,7 +179,7 @@ impl ArcStringBuilder {
 	pub fn push_str(&mut self, s: &str) {
 		self.reserve(s.len());
 		unsafe {
-			self.get_data_ptr_mut().byte_add(self.length as usize).as_ptr().copy_from_nonoverlapping(s.as_ptr(), s.len());
+			self.get_data_ptr_mut().byte_add(self.length as usize).copy_from_nonoverlapping(s.as_ptr(), s.len());
 		}
 		self.length = (self.length as usize + s.len()) as ulen;
 	}
@@ -194,19 +188,19 @@ impl ArcStringBuilder {
 	fn into_boxed_data(self) -> NonNull<Header> {
 		let boxed_data = if let Some(boxed_data) = self.get_boxed_data() {
 			if self.capacity > self.length {
-				unsafe {boxed_data.realloc(self.capacity as usize, self.length as usize)}
+				boxed_data.realloc(self.length as usize)
 			} else {
 				boxed_data
 			}
 		} else {
 			let self_str = self.as_str();
 			unsafe {
-				let boxed_data = BoxedData::alloc(self.length as usize);
-				boxed_data.get_data_ptr().as_ptr().copy_from_nonoverlapping(self_str.as_bytes().as_ptr(), self_str.len());
+				let mut boxed_data = BoxedData::alloc(self.length as usize);
+				boxed_data.get_data_ptr_mut().copy_from_nonoverlapping(self_str.as_bytes().as_ptr(), self_str.len());
 				boxed_data
 			}
 		};
-		let header = unsafe {boxed_data.finalize(self.length)};
+		let header = boxed_data.finalize();
 		core::mem::forget(self);
 		header
 	}
@@ -244,8 +238,8 @@ impl Clone for ArcStringBuilder {
 	fn clone(&self) -> Self {
 		if let Some(boxed_data) = self.get_boxed_data() {
 			unsafe {
-				let clone_boxed_data = BoxedData::alloc(self.capacity());
-				clone_boxed_data.get_data_ptr().copy_from_nonoverlapping(boxed_data.get_data_ptr(), self.length as usize);
+				let mut clone_boxed_data = BoxedData::alloc(self.capacity());
+				clone_boxed_data.get_data_ptr_mut().copy_from_nonoverlapping(boxed_data.get_data_ptr(), self.length as usize);
 				Self {
 					capacity: self.capacity,
 					length: self.length,
@@ -265,9 +259,7 @@ impl Clone for ArcStringBuilder {
 impl Drop for ArcStringBuilder {
 	fn drop(&mut self) {
 		if let Some(boxed_data) = self.get_boxed_data() {
-			unsafe {
-				boxed_data.dealloc(self.capacity as usize);
-			}
+			boxed_data.dealloc();
 		}
 	}
 }
@@ -321,11 +313,11 @@ impl From<ArcString> for ArcStringBuilder {
 	fn from(value: ArcString) -> Self {
 		match value.try_take_boxed_data() {
 			Ok(x) => {
-				let len = unsafe {x.len()};
+				let x = unsafe { BoxedData::from_ptr(x) };
 				ArcStringBuilder {
-					capacity: len,
-					length: len,
-					data: x.into_inner().as_ptr()
+					capacity: x.len(),
+					length: x.len(),
+					data: x.into_inner().as_ptr(),
 				}
 			}
 			Err(value) => ArcStringBuilder::from(value.as_str())
@@ -345,9 +337,9 @@ impl From<&str> for ArcStringBuilder {
 			sso
 		} else {
 			let len = s.len();
-			let boxed_data = BoxedData::alloc(len);
+			let mut boxed_data = BoxedData::alloc(len);
 			unsafe {
-				boxed_data.get_data_ptr().as_ptr().copy_from_nonoverlapping(s.as_ptr(), len);
+				boxed_data.get_data_ptr_mut().copy_from_nonoverlapping(s.as_ptr(), len);
 				Self {
 					capacity: len as ulen,
 					length: len as ulen,

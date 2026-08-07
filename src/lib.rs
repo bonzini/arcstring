@@ -79,18 +79,19 @@ impl ArcString {
 		s.into().leak()
 	}
 
-	pub(crate) fn get_boxed_data(&self) -> Option<BoxedData> {
+	pub(crate) fn get_boxed_data(&self) -> Option<BoxedData<'_>> {
 		if let Some(ptr) = encoder::as_ptr(self.0) {
-			Some(BoxedData::from_ptr(ptr))
+			Some(unsafe { BoxedData::from_ptr(ptr) })
 		} else {
 			None
 		}
 	}
 
-	pub(crate) fn try_take_boxed_data(self) -> Result<BoxedData, ArcString> {
-		if let Some(boxed_data) = self.get_boxed_data() && unsafe {boxed_data.is_only_ref()} {
+	pub(crate) fn try_take_boxed_data(self) -> Result<NonNull<Header>, ArcString> {
+		if let Some(boxed_data) = self.get_boxed_data() && boxed_data.is_only_ref() {
+			let header = boxed_data.into_inner();
 			core::mem::forget(self);
-			Ok(boxed_data)
+			Ok(header)
 		} else {
 			Err(self)
 		}
@@ -153,8 +154,8 @@ impl Default for ArcString {
 
 impl Clone for ArcString {
 	fn clone(&self) -> Self {
-		if let Some(boxed_data) = self.get_boxed_data() {
-			unsafe {boxed_data.increment_ref()};
+		if let Some(mut boxed_data) = self.get_boxed_data() {
+			boxed_data.increment_ref();
 		}
 		Self(self.0)
 	}
@@ -163,7 +164,7 @@ impl Clone for ArcString {
 impl Drop for ArcString {
 	fn drop(&mut self) {
 		if let Some(boxed_data) = self.get_boxed_data() {
-			unsafe {boxed_data.destroy_ref()};
+			boxed_data.destroy_ref();
 		}
 	}
 }
