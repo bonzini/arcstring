@@ -172,6 +172,17 @@ impl ArcStringBuilder {
 		}
 	}
 
+	/* the buffer is kept, so that a builder can be reused without allocating
+	   again; an inline builder instead goes back to being all padding, because
+	   everything past the length has to stay 0xFF for into_arcstring() to hand
+	   the word over as is */
+	pub fn clear(&mut self) {
+		self.length = 0;
+		if self.get_boxed_data().is_none() {
+			self.data = encoder::EMPTY.as_ptr();
+		}
+	}
+
 	pub fn push(&mut self, c: char) {
 		self.push_str(c.encode_utf8(&mut [0; 4]));
 	}

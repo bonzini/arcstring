@@ -167,3 +167,41 @@ fn test_builder_inline() {
 	assert_eq!(boxed.as_str(), NULS);
 	assert_eq!(ArcStringBuilder::from(NULS).leak().as_str(), NULS);
 }
+
+#[test]
+fn test_clear() {
+	/* an inline builder: the word has to go back to being all padding, so that
+	   into_arcstring() can hand it over unchanged */
+	let mut b = ArcStringBuilder::from("inline");
+	b.clear();
+	assert!(b.is_empty());
+	assert_eq!(b, "");
+	assert_eq!(b.clone().into_arcstring(), "");
+	b.push_str("ab");
+	assert_eq!(b, "ab");
+	assert_eq!(b.into_arcstring(), "ab");
+
+	/* a boxed builder keeps its buffer, so refilling it does not reallocate */
+	let mut b = ArcStringBuilder::from("a long string, boxed");
+	let capacity = b.capacity();
+	b.clear();
+	assert!(b.is_empty());
+	assert_eq!(b, "");
+	assert_eq!(b.capacity(), capacity);
+	assert_eq!(b.clone().into_arcstring(), "");
+	b.push_str("another long string");
+	assert_eq!(b, "another long string");
+	assert_eq!(b.capacity(), capacity);
+	assert_eq!(b.into_arcstring(), "another long string");
+
+	/* clearing a builder that grew out of the inline representation and then
+	   shrank back into it */
+	let mut b = ArcStringBuilder::from("a long string, boxed");
+	b.clear();
+	b.push_str("sso");
+	b.shrink_to_fit();
+	b.clear();
+	assert_eq!(b, "");
+	b.push_str("xy");
+	assert_eq!(b.into_arcstring(), "xy");
+}
