@@ -51,6 +51,19 @@ macro_rules! arcstring {
 	}};
 }
 
+/// Creates an [`ArcString`] from a format string and its arguments, just like
+/// [`format!`] does for `String`.  The pieces are written into an
+/// [`ArcStringBuilder`], so short results stay inline and never allocate.
+#[macro_export]
+macro_rules! format {
+	($($arg:tt)*) => {{
+		let mut builder = $crate::ArcStringBuilder::new();
+		::core::fmt::Write::write_fmt(&mut builder, ::core::format_args!($($arg)*))
+			.expect("a formatting trait implementation returned an error");
+		builder.into_arcstring()
+	}};
+}
+
 impl ArcString {
 	pub const fn empty() -> Self {
 		Self(encoder::EMPTY)
