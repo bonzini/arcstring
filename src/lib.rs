@@ -86,11 +86,7 @@ impl ArcString {
 	}
 
 	pub(crate) fn get_boxed_data(&self) -> Option<BoxedData<'_>> {
-		if let Some(ptr) = encoder::as_ptr(self.0) {
-			Some(unsafe { BoxedData::from_ptr(ptr) })
-		} else {
-			None
-		}
+		encoder::as_ptr(self.0).map(|ptr| unsafe { BoxedData::from_ptr(ptr) })
 	}
 
 	pub(crate) fn try_take_boxed_data(self) -> Result<NonNull<Header>, ArcString> {
