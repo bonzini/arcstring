@@ -63,6 +63,7 @@ pub const fn try_encode_sso(s: &str) -> Option<NonNull<Header>> {
 
 	// the padding is empty for a string of MAX_SSO_LEN bytes, which is the only
 	// case in which the encoding can be zero: MAX_SSO_LEN NUL bytes are boxed
+        // to preserve the niche
 	encode_inline(data)
 }
 
